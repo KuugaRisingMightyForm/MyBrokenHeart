@@ -1,0 +1,352 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>流动爱心表白（仅修改文字格式）</title>
+  <style>
+    html,body { height:100%; margin:0; background:#000; overflow:hidden; font-family:Arial, Helvetica, sans-serif; }
+    /* 画布保持覆盖全屏（不改动） */
+    canvas#canvas { position:fixed; left:0; top:0; width:100vw; height:100vh; display:block; z-index:0; }
+
+    /* UI 层 */
+    .ui-layer { position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2; pointer-events:none; }
+
+    /* 中心容器 — 我只改文字布局 */
+    .center-container { text-align:center; color:#ffeef4; pointer-events:none; transform:translateY(6%); }
+
+    /* 图标（图片）样式保持原样 */
+    .music-icon {
+      width: clamp(48px, 6vw, 96px);
+      height: clamp(48px, 6vw, 96px);
+      object-fit: contain;
+      display:block;
+      margin: 0 auto;
+      cursor: pointer;
+      pointer-events: auto;
+      user-select: none;
+      border-radius: 12px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.5);
+      background: rgba(255,255,255,0.02);
+    }
+    .rotating { animation: spin 2.2s linear infinite; transform-origin: 50% 50%; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    .stopped { opacity: 0.7; filter: grayscale(.2) contrast(.9); }
+
+    /* 文字现在被拆成多段并居中 */
+    #centerText {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;                       /* 段落间距 */
+      align-items: center;               /* 水平居中每一段 */
+      text-align: center;
+      max-width: min(80vw, 720px);       /* 限制最大宽度，避免撑屏 */
+      margin: 0 auto;
+      pointer-events: auto;
+    }
+    .center-line {
+      margin: 0;
+      font-size: clamp(16px, 2.8vw, 32px);
+      line-height: 1.2;
+      font-weight: 600;
+      text-shadow: 0 2px 8px rgba(0,0,0,0.7);
+      word-break: break-word;
+      color: #ffeef4;
+    }
+
+    .hint { font-size:clamp(12px,1.6vw,14px); color:rgba(255,255,255,.7); margin-top:8px; }
+    .overlay-play { position:fixed; left:50%; top:50%; transform:translate(-50%,-30%); z-index:3;
+                   background:rgba(0,0,0,0.55); color:#fff; padding:10px 18px; border-radius:12px; display:none; cursor:pointer; pointer-events:auto; }
+    .overlay-play.show { display:block; }
+  </style>
+</head>
+<body>
+  <canvas id="canvas" width="1400" height="600"></canvas>
+
+  <div class="ui-layer" aria-hidden="false">
+    <div class="center-container" id="centerContainer">
+      <!-- 使用你自己的图片图标（保留原路径） -->
+      <img id="musicIcon" class="music-icon rotating" src="images/新建文件夹/shasha.gif" alt="音乐开关 (点击切换)" title="点击切换音乐">
+
+      <!-- 只对文字做分段、居中与宽度限制（你可以替换每段内容） -->
+      <div id="centerText" aria-live="polite">
+        <p class="center-line">亲，我对你的喜欢就像这永不停歇的流动之心 💗。</p>
+        <p class="center-line">你可知我日夜为你牵挂，心绪随你起落？</p>
+        <p class="center-line">若你真不忍心看着我郁郁寡欢，那我又何必自挂东南枝呢？呜呜呜嘤嘤嘤</p>
+      </div>
+
+      <div class="hint">点击上方图标切换（播放/暂停 + 旋转/停止）</div>
+    </div>
+  </div>
+
+  <div id="overlayPlay" class="overlay-play">点击播放音乐并开始旋转</div>
+
+  <!-- 音频（请确保相对路径有效） -->
+  <audio id="bgAudio" loop preload="auto">
+    <source src="images/于是-郑润泽.mp3" type="audio/mpeg">
+    你的浏览器不支持 audio 元素。
+  </audio>
+
+  <script>
+  // ---------- 完整保留你原始的着色器与渲染逻辑（未改动） ----------
+  const canvas = document.getElementById('canvas');
+  const gl = canvas.getContext('webgl');
+  if (!gl) { console.error('无法初始化 WebGL'); }
+
+  // 保证 canvas pixel size 与显示大小一致（DPR 支持）
+  function resizeCanvasToDisplaySize() {
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.floor(window.innerWidth * dpr));
+    const h = Math.max(1, Math.floor(window.innerHeight * dpr));
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width = w; canvas.height = h;
+      canvas.style.width = window.innerWidth + 'px';
+      canvas.style.height = window.innerHeight + 'px';
+    }
+  }
+  resizeCanvasToDisplaySize();
+
+  // 顶点着色器（与你原始一致）
+  const vertexSource = `
+  attribute vec2 position;
+  void main() {
+      gl_Position = vec4(position, 0.0, 1.0);
+  }
+  `;
+
+  // 片段着色器（**完整恢复你最初的 shader**）
+  const fragmentSource = `
+  precision highp float;
+  uniform float width;
+  uniform float height;
+  vec2 resolution = vec2(width, height);
+  uniform float time;
+  #define POINT_COUNT 8
+  vec2 points[POINT_COUNT];
+  const float speed = -0.5;
+  const float len = 0.25;
+  float intensity = 0.9;
+  float radius = 0.015;
+  //https://www.shadertoy.com/view/MlKcDD
+  //Signed distance to a quadratic bezier
+  float sdBezier(vec2 pos, vec2 A, vec2 B, vec2 C){    
+      vec2 a = B - A;
+      vec2 b = A - 2.0*B + C;
+      vec2 c = a * 2.0;
+      vec2 d = A - pos;
+      float kk = 1.0 / dot(b,b);
+      float kx = kk * dot(a,b);
+      float ky = kk * (2.0*dot(a,a)+dot(d,b)) / 3.0;
+      float kz = kk * dot(d,a);      
+      float res = 0.0;
+      float p = ky - kx*kx;
+      float p3 = p*p*p;
+      float q = kx*(2.0*kx*kx - 3.0*ky) + kz;
+      float h = q*q + 4.0*p3;
+      if(h >= 0.0){ 
+          h = sqrt(h);
+          vec2 x = (vec2(h, -h) - q) / 2.0;
+          vec2 uv = sign(x)*pow(abs(x), vec2(1.0/3.0));
+          float t = uv.x + uv.y - kx;
+          t = clamp( t, 0.0, 1.0 );
+          // 1 root
+          vec2 qos = d + (c + b*t)*t;
+          res = length(qos);
+      }else{
+          float z = sqrt(-p);
+          float v = acos( q/(p*z*2.0) ) / 3.0;
+          float m = cos(v);
+          float n = sin(v)*1.732050808;
+          vec3 t = vec3(m + m, -n - m, n - m) * z - kx;
+          t = clamp( t, 0.0, 1.0 );
+          // 3 roots
+          vec2 qos = d + (c + b*t.x)*t.x;
+          float dis = dot(qos,qos);
+          
+          res = dis;
+          qos = d + (c + b*t.y)*t.y;
+          dis = dot(qos,qos);
+          res = min(res,dis);
+          
+          qos = d + (c + b*t.z)*t.z;
+          dis = dot(qos,qos);
+          res = min(res,dis);
+          res = sqrt( res );
+      }
+      
+      return res;
+  }
+  //http://mathworld.wolfram.com/HeartCurve.html
+  vec2 getHeartPosition(float t){
+      return vec2(16.0 * sin(t) * sin(t) * sin(t),
+                              -(13.0 * cos(t) - 5.0 * cos(2.0*t)
+                              - 2.0 * cos(3.0*t) - cos(4.0*t)));
+  }
+  //https://www.shadertoy.com/view/3s3GDn
+  float getGlow(float dist, float radius, float intensity){
+      return pow(radius/dist, intensity);
+  }
+  float getSegment(float t, vec2 pos, float offset, float scale){
+      for(int i = 0; i < POINT_COUNT; i++){
+          points[i] = getHeartPosition(offset + float(i)*len + fract(speed * t) * 6.28);
+      }
+      
+      vec2 c = (points[0] + points[1]) / 2.0;
+      vec2 c_prev;
+      float dist = 10000.0;
+      
+      for(int i = 0; i < POINT_COUNT-1; i++){
+          //https://tinyurl.com/y2htbwkm
+          c_prev = c;
+          c = (points[i] + points[i+1]) / 2.0;
+          dist = min(dist, sdBezier(pos, scale * c_prev, scale * points[i], scale * c));
+      }
+      return max(0.0, dist);
+  }
+  void main(){
+      vec2 uv = gl_FragCoord.xy/resolution.xy;
+      float widthHeightRatio = resolution.x/resolution.y;
+      vec2 centre = vec2(0.5, 0.5);
+      vec2 pos = centre - uv;
+      pos.y /= widthHeightRatio;
+      //Shift upwards to centre heart
+      pos.y += 0.02;
+      float scale = 0.000015 * height;
+      
+      float t = time;
+      
+      //Get first segment
+      float dist = getSegment(t, pos, 0.0, scale);
+      float glow = getGlow(dist, radius, intensity);
+      
+      vec3 col = vec3(0.0);
+      
+      //White core
+      col += 10.0*vec3(smoothstep(0.003, 0.001, dist));
+      //Pink glow
+      col += glow * vec3(0.94,0.14,0.4);
+      
+      //Get second segment
+      dist = getSegment(t, pos, 3.4, scale);
+      glow = getGlow(dist, radius, intensity);
+      
+      //White core
+      col += 10.0*vec3(smoothstep(0.003, 0.001, dist));
+      //Blue glow
+      col += glow * vec3(0.2,0.6,1.0);
+          
+      //Tone mapping
+      col = 1.0 - exp(-col);
+      //Output to screen
+       gl_FragColor = vec4(col,1.0);
+  }
+  `;
+
+  // 编译、链接 shader（与之前版本相同）
+  function compileShader(src, type) {
+    const shader = gl.createShader(type);
+    gl.shaderSource(shader, src);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw 'Shader compile error: ' + gl.getShaderInfoLog(shader);
+    }
+    return shader;
+  }
+
+  const vert = compileShader(vertexSource, gl.VERTEX_SHADER);
+  const frag = compileShader(fragmentSource, gl.FRAGMENT_SHADER);
+  const program = gl.createProgram();
+  gl.attachShader(program, vert);
+  gl.attachShader(program, frag);
+  gl.linkProgram(program);
+  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) throw 'Program link error: ' + gl.getProgramInfoLog(program);
+  gl.useProgram(program);
+
+  // 全屏 quad
+  const quad = new Float32Array([-1,1, -1,-1, 1,1, 1,-1]);
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf); gl.bufferData(gl.ARRAY_BUFFER, quad, gl.STATIC_DRAW);
+  const posLoc = gl.getAttribLocation(program, 'position'); if (posLoc === -1) throw 'No position';
+  gl.enableVertexAttribArray(posLoc); gl.vertexAttribPointer(posLoc, 2, gl.FLOAT, false, 8, 0);
+
+  const timeLoc = gl.getUniformLocation(program, 'time');
+  const widthLoc = gl.getUniformLocation(program, 'width');
+  const heightLoc = gl.getUniformLocation(program, 'height');
+
+  function updateViewport() {
+    resizeCanvasToDisplaySize();
+    gl.viewport(0,0,canvas.width,canvas.height);
+    gl.uniform1f(widthLoc, canvas.width);
+    gl.uniform1f(heightLoc, canvas.height);
+  }
+  updateViewport(); window.addEventListener('resize', updateViewport);
+
+  // 渲染循环（保留原来时间步）
+  let dt = 0.015, time = 0.0;
+  function drawLoop(){
+    time += dt;
+    gl.uniform1f(timeLoc, time);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    requestAnimationFrame(drawLoop);
+  }
+  drawLoop();
+
+  // ---------- 音频与图标控制（保持之前行为：点击切换 播放↔暂停 并同步旋转） ----------
+  const audio = document.getElementById('bgAudio');
+  const icon = document.getElementById('musicIcon');
+  const overlay = document.getElementById('overlayPlay');
+
+  let isPlaying = false;
+
+  function tryAutoPlay(){
+    // 若希望「未播放时图标不旋转」可把下一行注释掉
+    icon.classList.add('rotating');
+    const p = audio.play();
+    if (p !== undefined) {
+      p.then(() => {
+        isPlaying = true;
+        icon.classList.remove('stopped');
+        overlay.classList.remove('show');
+      }).catch((err) => {
+        console.warn('自动播放被阻止：', err);
+        isPlaying = false;
+        overlay.classList.add('show');
+      });
+    }
+  }
+
+  function togglePlay(){
+    if (isPlaying) {
+      audio.pause();
+      try{ audio.currentTime = 0; } catch(e){}
+      isPlaying = false;
+      icon.classList.remove('rotating');
+      icon.classList.add('stopped');
+      overlay.classList.remove('show');
+    } else {
+      const p = audio.play();
+      if (p !== undefined) {
+        p.then(() => {
+          isPlaying = true;
+          icon.classList.add('rotating');
+          icon.classList.remove('stopped');
+          overlay.classList.remove('show');
+        }).catch((err) => {
+          console.warn('播放被阻止：', err);
+          overlay.classList.add('show');
+        });
+      } else {
+        audio.play();
+        isPlaying = true;
+        icon.classList.add('rotating');
+        icon.classList.remove('stopped');
+        overlay.classList.remove('show');
+      }
+    }
+  }
+
+  icon.addEventListener('click', togglePlay);
+  overlay.addEventListener('click', togglePlay);
+  window.addEventListener('load', tryAutoPlay);
+  </script>
+</body>
+</html>
